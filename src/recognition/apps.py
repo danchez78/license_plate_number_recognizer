@@ -16,13 +16,16 @@ class Recognizer:
     _LETTERS = "АВЕКМНОРСТУХ"
     _CHARS = sorted(list(set(_NUMBERS).union(set(_LETTERS))))
     _LICENSE_PLATE_NUMBER_PATTERN = Template(
-        r"[$letters]{1}[$numbers]{3}[$letters]{2}[$numbers]{2,3}").substitute(letters=_LETTERS, numbers=_NUMBERS)
-    _LICENSE_PLATE_NUMBER_CASCADE = 'haarcascade_russian_plate_number.xml'
-    _MODEL_PATH = os.path.join(settings.BASE_DIR, 'recognition/model.tflite')
+        r"[$letters]{1}[$numbers]{3}[$letters]{2}[$numbers]{2,3}"
+    ).substitute(letters=_LETTERS, numbers=_NUMBERS)
+    _LICENSE_PLATE_NUMBER_CASCADE = "haarcascade_russian_plate_number.xml"
+    _MODEL_PATH = os.path.join(settings.BASE_DIR, "recognition/model.tflite")
     _PREDICT_ATTEMPTS = 3
 
     def __init__(self) -> None:
-        self._haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + self._LICENSE_PLATE_NUMBER_CASCADE)
+        self._haar_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + self._LICENSE_PLATE_NUMBER_CASCADE
+        )
         self._model = tf.lite.Interpreter(self._MODEL_PATH)
         self._model_input = self._model.get_input_details()
         self._model_output = self._model.get_output_details()
@@ -47,10 +50,10 @@ class Recognizer:
 
     def _get_model_prediction(self, image) -> str:
         self._model.allocate_tensors()
-        self._model.set_tensor(self._model_input[0]['index'], image)
+        self._model.set_tensor(self._model_input[0]["index"], image)
         self._model.invoke()
 
-        net_out_value = self._model.get_tensor(self._model_output[0]['index'])
+        net_out_value = self._model.get_tensor(self._model_output[0]["index"])
         pred_texts = self._decode_batch(net_out_value)
         return pred_texts
 
@@ -65,18 +68,22 @@ class Recognizer:
         img = np.float32(img.reshape(1, 128, 64, 1))
         return img
 
-    def _license_plate_number_extract(self, image: cv2.typing.MatLike) -> cv2.typing.MatLike:
-        license_plate_number_rects = self._haar_cascade.detectMultiScale(image, scaleFactor=1.2, minNeighbors=5)
+    def _license_plate_number_extract(
+        self, image: cv2.typing.MatLike
+    ) -> cv2.typing.MatLike:
+        license_plate_number_rects = self._haar_cascade.detectMultiScale(
+            image, scaleFactor=1.2, minNeighbors=5
+        )
 
         for x, y, w, h in license_plate_number_rects:
-            return image[y+5:y+h-5, x+5:x+w-5]
+            return image[y + 5 : y + h - 5, x + 5 : x + w - 5]
 
     def _decode_batch(self, out: np.ndarray) -> str:
         result = []
         for j in range(out.shape[0]):
             out_best = list(np.argmax(out[j, 2:], 1))
             out_best = [k for k, g in itertools.groupby(out_best)]
-            out_str = ''
+            out_str = ""
             for c in out_best:
                 if c < len(self._CHARS):
                     out_str += self._CHARS[c]
