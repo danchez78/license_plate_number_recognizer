@@ -20,65 +20,60 @@ class Recognizer:
     ).substitute(letters=_LETTERS, numbers=_NUMBERS)
     _LICENSE_PLATE_NUMBER_CASCADE = "haarcascade_russian_plate_number.xml"
     _MODEL_PATH = os.path.join(settings.BASE_DIR, "recognition/model.tflite")
-    _PREDICT_ATTEMPTS = 6
+    _SCALE_FACTORS = [1.2, 1.1, 1.3, 1.4, 1.5, 1.6]
 
     def __init__(self) -> None:
         self._haar_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + self._LICENSE_PLATE_NUMBER_CASCADE
         )
         self._model = tf.lite.Interpreter(self._MODEL_PATH)
-        self._model_input = self._model.get_input_details()
-        self._model_output = self._model.get_output_details()
 
     def get_license_plate_number(self, image_body: bytes) -> str:
         with tempfile.NamedTemporaryFile() as f:
             f.write(image_body)
-            for attempt in range(1, self._PREDICT_ATTEMPTS + 1):
-                # prepare image
-                image = self._get_image(f.name, attempt)
+            for scale_factor in self._SCALE_FACTORS:
+                image = self._prepare_image(f.name, scale_factor)
 
                 prediction = self._get_model_prediction(image)
+                print(f"Prediction: {prediction}")
                 validated_prediction = self._validate(prediction)
 
-                if not validated_prediction:
-                    # model returned result with not correct format of russian license plate number
-                    continue
-                return validated_prediction
+                if validated_prediction:
+                    return validated_prediction
+
             return ""
 
     def _validate(self, license_plate_number: str) -> str:
         # check whether license plate number format is correct
         match = re.match(self._LICENSE_PLATE_NUMBER_PATTERN, license_plate_number)
-        if match:
-            return match.group()
-        return ""
+        return match.group() if match else ""
 
     def _get_model_prediction(self, image: cv2.typing.MatLike) -> str:
         self._model.allocate_tensors()
-        self._model.set_tensor(self._model_input[0]["index"], image)
+
+        model_input = self._model.get_input_details()
+        self._model.set_tensor(model_input[0]["index"], image)
+
         self._model.invoke()
 
-        net_out_value = self._model.get_tensor(self._model_output[0]["index"])
-        pred_texts = self._decode_batch(net_out_value)
-        return pred_texts
+        model_output = self._model.get_output_details()
 
-    def _get_image(self, image_path: str, attempt: int) -> cv2.typing.MatLike:
-        # attempt might be from 1 to 5
+        net_out_value = self._model.get_tensor(model_output[0]["index"])
+
+        self._model.reset_all_variables()
+
+        return self._decode_batch(net_out_value)
+
+    def _prepare_image(self, image_path: str, scale_factor: float) -> cv2.typing.MatLike:
         img = cv2.imread(image_path)
-        # extract image of license plate number from image
-        scale_factor = 1 + (attempt / 10)
-        img = self._license_plate_number_extract(img, scale_factor)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img = cv2.resize(img, (128, 64))
-        img = img.astype(np.float32)
-        img /= 255
-        img = img.T
-        img = np.float32(img.reshape(1, 128, 64, 1))
+        img = self._extract_license_plate_image(img, scale_factor)
+        img = self._preprocess_image(img)
         return img
 
-    def _license_plate_number_extract(
+    def _extract_license_plate_image(
         self, image: cv2.typing.MatLike, scale_factor: float
     ) -> cv2.typing.MatLike:
+
         license_plate_number_rects = self._haar_cascade.detectMultiScale(
             image, scaleFactor=scale_factor, minNeighbors=5
         )
@@ -90,17 +85,23 @@ class Recognizer:
             # so try to return not cropped image
             return image
 
-        for x, y, w, h in license_plate_number_rects:
-            return image[y : y + h, x : x + w]
+        x, y, w, h = license_plate_number_rects[0]
+        return image[y : y + h, x : x + w]
 
     def _decode_batch(self, out: np.ndarray) -> str:
         result = []
         for j in range(out.shape[0]):
             out_best = list(np.argmax(out[j, 2:], 1))
             out_best = [k for k, g in itertools.groupby(out_best)]
-            out_str = ""
-            for c in out_best:
-                if c < len(self._CHARS):
-                    out_str += self._CHARS[c]
+            out_str = "".join(self._CHARS[c] for c in out_best if c < len(self._CHARS))
             result.append(out_str)
         return result[0]
+
+    @staticmethod
+    def _preprocess_image(img: cv2.typing.MatLike) -> cv2.typing.MatLike:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = cv2.resize(img, (128, 64))
+        img = img.astype(np.float32) / 255
+        img = img.T
+        img = np.float32(img.reshape(1, 128, 64, 1))
+        return img
