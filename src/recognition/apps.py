@@ -35,7 +35,6 @@ class Recognizer:
                 image = self._prepare_image(f.name, scale_factor)
 
                 prediction = self._get_model_prediction(image)
-                print(f"Prediction: {prediction}")
                 validated_prediction = self._validate(prediction)
 
                 if validated_prediction:
